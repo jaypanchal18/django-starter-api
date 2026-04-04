@@ -1,16 +1,26 @@
-# settings.py
-
 import os
-from pathlib import Path
-import dj_database_url
+import sys
+import django
+from django.core.management import execute_from_command_line
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+# Set up the Django environment
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myproject.settings')
+django.setup()
 
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'your-secret-key')
+# Define the project structure
+project_structure = {
+    'myproject': {
+        '__init__.py': '',
+        'settings.py': '''
+import os
 
-DEBUG = os.environ.get('DJANGO_DEBUG', 'False') == 'True'
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',')
+SECRET_KEY = os.getenv('SECRET_KEY', 'your-default-secret-key')
+
+DEBUG = os.getenv('DEBUG', 'False') == 'True'
+
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -20,6 +30,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'myapp',
 ]
 
 MIDDLEWARE = [
@@ -32,7 +43,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-ROOT_URLCONF = 'your_project.urls'
+ROOT_URLCONF = 'myproject.urls'
 
 TEMPLATES = [
     {
@@ -50,14 +61,17 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'your_project.wsgi.application'
+WSGI_APPLICATION = 'myproject.wsgi.application'
 
 DATABASES = {
-    'default': dj_database_url.config(
-        default=os.environ.get('DATABASE_URL', 'postgres://user:password@localhost:5432/dbname'),
-        conn_max_age=600,
-        ssl_require=False
-    )
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('DB_NAME', 'mydatabase'),
+        'USER': os.getenv('DB_USER', 'myuser'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'mypassword'),
+        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'PORT': os.getenv('DB_PORT', '5432'),
+    }
 }
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -86,45 +100,93 @@ USE_L10N = True
 USE_TZ = True
 
 STATIC_URL = '/static/'
+''',
+        'urls.py': '''
+from django.contrib import admin
+from django.urls import path, include
 
-# Dockerfile
+urlpatterns = [
+    path('admin/', admin.site.urls),
+    path('api/', include('myapp.urls')),
+]
+''',
+        'wsgi.py': '''
+import os
+from django.core.wsgi import get_wsgi_application
 
-FROM python:3.9-slim
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myproject.settings')
 
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
+application = get_wsgi_application()
+''',
+    },
+    'myapp': {
+        '__init__.py': '',
+        'models.py': '''
+from django.db import models
 
-WORKDIR /app
+class ExampleModel(models.Model):
+    name = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
 
-COPY requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
+    def __str__(self):
+        return self.name
+''',
+        'views.py': '''
+from rest_framework import viewsets
+from .models import ExampleModel
+from .serializers import ExampleModelSerializer
 
-COPY . /app/
+class ExampleModelViewSet(viewsets.ModelViewSet):
+    queryset = ExampleModel.objects.all()
+    serializer_class = ExampleModelSerializer
+''',
+        'serializers.py': '''
+from rest_framework import serializers
+from .models import ExampleModel
 
-# docker-compose.yml
+class ExampleModelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExampleModel
+        fields = '__all__'
+''',
+        'urls.py': '''
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import ExampleModelViewSet
 
-version: '3.8'
+router = DefaultRouter()
+router.register(r'example', ExampleModelViewSet)
 
-services:
-  db:
-    image: postgres:13
-    restart: always
-    environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: dbname
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+urlpatterns = [
+    path('', include(router.urls)),
+]
+''',
+    },
+}
 
-  web:
-    build: .
-    command: python manage.py runserver 0.0.0.0:8000
-    volumes:
-      - .:/app
-    ports:
-      - "8000:8000"
-    depends_on:
-      - db
+# Function to create project structure
+def create_project_structure(base_path, structure):
+    for name, content in structure.items():
+        path = os.path.join(base_path, name)
+        if isinstance(content, dict):
+            os.makedirs(path, exist_ok=True)
+            create_project_structure(path, content)
+        else:
+            with open(path, 'w') as file:
+                file.write(content.strip())
 
-volumes:
-  postgres_data:
+# Create the project structure
+try:
+    create_project_structure(os.getcwd(), project_structure)
+    print("Project structure created successfully.")
+except Exception as e:
+    print(f"Error creating project structure: {e}", file=sys.stderr)
+    sys.exit(1)
+
+# Run migrations and start the server
+try:
+    execute_from_command_line(['manage.py', 'migrate'])
+    execute_from_command_line(['manage.py', 'runserver'])
+except Exception as e:
+    print(f"Error during migrations or server start: {e}", file=sys.stderr)
+    sys.exit(1)
